@@ -3,7 +3,7 @@ import io
 import logging
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
 from assembler import Assembler, AssembleError
 
@@ -62,7 +62,8 @@ async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "Ассемблирует программы для Tiny Basic Virtual Machine.\n\n"
         "`/help` — справка\n"
         "`/asm MOV r0 42 ; PRINT r0 ; HALT` — собрать\n"
-        "`/example` — пример",
+        "`/example` — пример\n\n"
+        "📁 *Загрузи `.s` или `.asm` файл* — получу `.bin`"
     )
 
 
@@ -95,6 +96,50 @@ async def cmd_asm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Internal error: {e}")
 
 
+SUPPORTED_EXTENSIONS = {'.s', '.asm', '.txt'}
+
+
+async def handle_file(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    doc = update.message.document
+    if not doc:
+        return
+
+    ext = os.path.splitext(doc.file_name or "")[1].lower()
+    if ext not in SUPPORTED_EXTENSIONS:
+        allowed = ", ".join(SUPPORTED_EXTENSIONS)
+        await update.message.reply_text(
+            f"❌ Поддерживаются только файлы: {allowed}"
+        )
+        return
+
+    msg = await update.message.reply_text("⏳ Ассемблирую...")
+    try:
+        file = await doc.get_file()
+        raw = await file.download_as_bytearray()
+        code = raw.decode("utf-8")
+    except Exception:
+        await msg.edit_text("❌ Не удалось прочитать файл. Убедись, что он в UTF-8.")
+        return
+
+    try:
+        data = asm.assemble(code)
+        base = os.path.splitext(doc.file_name)[0]
+        caption = f"✅ {doc.file_name} → {base}.bin ({len(data)} bytes, {len(data)//4} instr)"
+        await update.message.reply_document(
+            document=io.BytesIO(data),
+            filename=f"{base}.bin",
+            caption=caption,
+        )
+        await msg.delete()
+        dis = asm.disassemble(data)
+        if len(dis) < 3500:
+            await update.message.reply_text(f"```\n{dis}\n```")
+    except AssembleError as e:
+        await msg.edit_text(f"❌ {e}")
+    except Exception as e:
+        await msg.edit_text(f"❌ Internal error: {e}")
+
+
 async def cmd_example(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     data = asm.assemble(EXAMPLE_CODE)
     await update.message.reply_document(
@@ -116,6 +161,9 @@ def main():
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("asm", cmd_asm))
     app.add_handler(CommandHandler("example", cmd_example))
+    app.add_handler(MessageHandler(filters.Document.FileExtension("s"), handle_file))
+    app.add_handler(MessageHandler(filters.Document.FileExtension("asm"), handle_file))
+    app.add_handler(MessageHandler(filters.Document.FileExtension("txt"), handle_file))
     print("✅ TBVM Bot запущен")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
