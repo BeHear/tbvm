@@ -1,4 +1,5 @@
 use crate::error::VmError;
+use std::io::Read;
 
 const VRAM_W: usize = 128;
 const VRAM_H: usize = 128;
@@ -11,6 +12,7 @@ enum Op {
     Halt, Mov, Add, Addi, Sub, Subi,
     Cmp, Cmpi, Jmp, Jz, Jnz,
     Call, Ret, Store, Load, Draw, Print,
+    Cls, Rand, Key,
 }
 
 pub struct Vm {
@@ -22,6 +24,7 @@ pub struct Vm {
     pub vram: [i32; VRAM_W * VRAM_H],
     code: Vec<i32>,
     ip: usize,
+    rng_state: u32,
 }
 
 fn decode_op(val: i32) -> Option<Op> {
@@ -30,13 +33,19 @@ fn decode_op(val: i32) -> Option<Op> {
         4 => Op::Sub,   5 => Op::Subi, 6 => Op::Cmp,  7 => Op::Cmpi,
         8 => Op::Jmp,   9 => Op::Jz,  10 => Op::Jnz, 11 => Op::Call,
         12 => Op::Ret, 13 => Op::Store, 14 => Op::Load,
-        15 => Op::Draw, 16 => Op::Print,
+         15 => Op::Draw, 16 => Op::Print,
+         17 => Op::Cls, 18 => Op::Rand, 19 => Op::Key,
         _ => return None,
     })
 }
 
 impl Vm {
     pub fn new(code: Vec<i32>) -> Self {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u32)
+            .unwrap_or(12345);
         Vm {
             regs: [0; NUM_REGS],
             memory: [0; MEM_SIZE],
@@ -46,6 +55,7 @@ impl Vm {
             vram: [0; VRAM_W * VRAM_H],
             code,
             ip: 0,
+            rng_state: seed,
         }
     }
 
@@ -194,6 +204,27 @@ impl Vm {
                 Op::Print => {
                     let r = self.reg_idx()?;
                     println!("OUT: {}", self.regs[r]);
+                }
+
+                Op::Cls => {
+                    self.vram.fill(0);
+                }
+
+                Op::Rand => {
+                    let r = self.reg_idx()?;
+                    let m = self.read()?;
+                    self.rng_state = self.rng_state.wrapping_mul(1103515245).wrapping_add(12345);
+                    let val = (self.rng_state >> 16) as i32;
+                    self.regs[r] = if m > 0 { val % m } else { 0 };
+                }
+
+                Op::Key => {
+                    let r = self.reg_idx()?;
+                    let mut buf = [0u8; 1];
+                    match std::io::stdin().read_exact(&mut buf) {
+                        Ok(()) => self.regs[r] = buf[0] as i32,
+                        Err(_) => self.regs[r] = -1,
+                    }
                 }
             }
         }

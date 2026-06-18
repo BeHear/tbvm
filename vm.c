@@ -1,6 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
+#include <sys/select.h>
+#include <unistd.h>
+#include <time.h>
 
 #define VRAM_WIDTH 128
 #define VRAM_HEIGHT 128
@@ -11,7 +15,8 @@
 enum {
     HALT = 0, MOV, ADD, ADDI, SUB, SUBI,
     CMP, CMPI, JMP, JZ, JNZ,
-    CALL, RET, STORE, LOAD, DRAW, PRINT
+    CALL, RET, STORE, LOAD, DRAW, PRINT,
+    CLS, RAND, KEY
 };
 
 int regs[NUM_REGS];
@@ -149,6 +154,33 @@ void run(int* code, int size) {
                 { int r = code[ip++];
                   if (safe_reg(r)) printf("OUT: %d\n", regs[r]); }
                 break;
+            case CLS:
+                memset(vram, 0, sizeof(vram));
+                break;
+            case RAND:
+                if (!safe_ip(ip, 2, size)) return;
+                { int r = code[ip++]; int mod = code[ip++];
+                  if (safe_reg(r)) regs[r] = mod > 0 ? rand() % mod : 0; }
+                break;
+            case KEY:
+                if (!safe_ip(ip, 1, size)) return;
+                { int r = code[ip++];
+                  if (safe_reg(r)) {
+                      struct timeval tv = {0, 0};
+                      fd_set fds;
+                      FD_ZERO(&fds);
+                      FD_SET(STDIN_FILENO, &fds);
+                      if (select(1, &fds, NULL, NULL, &tv) > 0) {
+                          char c;
+                          if (read(STDIN_FILENO, &c, 1) > 0)
+                              regs[r] = (unsigned char)c;
+                          else
+                              regs[r] = -1;
+                      } else {
+                          regs[r] = -1;
+                      }
+                  } }
+                break;
             case HALT:
                 return;
             default:
@@ -182,6 +214,8 @@ int main(int argc, char** argv) {
     int code[4096];
     int size = (int)fread(code, sizeof(int), 4096, f);
     fclose(f);
+
+    srand((unsigned int)time(NULL));
 
     run(code, size);
 

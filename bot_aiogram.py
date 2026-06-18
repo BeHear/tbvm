@@ -15,8 +15,6 @@ from assembler import Assembler, AssembleError
 TOKEN = os.environ.get("TBVM_BOT_TOKEN", "")
 asm = Assembler()
 
-import re
-
 HELP_TEXT = """\
 🤖 <b>TBVM Assembler Bot</b>
 
@@ -47,12 +45,15 @@ HELP_TEXT = """\
 <code>LOAD rN addr</code> — rN = memory[addr]
 <code>DRAW rX rY rC</code> — пиксель (regs[rX], regs[rY]) цвета regs[rC]
 <code>PRINT rN</code> — вывод regs[rN]
+<code>CLS</code> — очистка экрана
+<code>RAND rN val</code> — rN = случайное число (0..val-1)
+<code>KEY rN</code> — чтение клавиши (ASCII) в rN
 
 <b>Синтаксис:</b>
 Метки: <code>.имя</code>
 Комментарии: <code>;</code> или <code>#</code>
 Регистры: <code>r0</code>-<code>r7</code>
-Разделитель строк: <code>;</code> (в середине строки)"""
+Разделитель строк: <code>|</code>"""
 
 EXAMPLE_CODE = """\
 ; Countdown from 10 to 1
@@ -65,16 +66,8 @@ JNZ .loop
 HALT"""
 
 def _normalize_code(raw: str) -> str:
-    """Split inline `;` separators but preserve line-leading `;` comments."""
-    lines = raw.split("\n")
-    out = []
-    for line in lines:
-        stripped = line.lstrip()
-        if stripped.startswith(";") or stripped.startswith("#"):
-            out.append(line)
-        else:
-            out.append(re.sub(r"\s*;\s*", "\n", line))
-    return "\n".join(out)
+    """Split inline `|` separators; preserve `;` and `#` as comments only."""
+    return raw.replace("|", "\n")
 MAX_FILE_SIZE = 64 * 1024
 
 # ── Sandboxed VM execution ──────────────────────────────────────────
@@ -173,8 +166,8 @@ async def cmd_start(message: Message) -> None:
         "🤖 <b>TBVM Assembler Bot</b>\n\n"
         "Ассемблирует программы для Tiny Basic Virtual Machine.\n\n"
         "<code>/help</code> — справка\n"
-        "<code>/asm MOV r0 42 ; PRINT r0 ; HALT</code> — собрать\n"
-        "<code>/run MOV r0 42 ; PRINT r0 ; HALT</code> — собрать и выполнить\n"
+        "<code>/asm MOV r0 42 | PRINT r0 | HALT</code> — собрать\n"
+        "<code>/run MOV r0 42 | PRINT r0 | HALT</code> — собрать и выполнить\n"
         "<code>/example</code> — пример\n\n"
         f"{prefix}\n\n"
         "📁 <b>Загрузи</b> <code>.s</code> / <code>.asm</code> / <code>.txt</code> файл — получу <code>.bin</code>",
@@ -203,8 +196,8 @@ async def cmd_asm(message: Message, command: CommandObject) -> None:
     args = command.args
     if not args:
         await message.answer(
-            "Использование: <code>/asm MOV r0 42 ; PRINT r0 ; HALT</code>\n"
-            "Можно разделять строки через <code>;</code> или многострочным сообщением."
+            "Использование: <code>/asm MOV r0 42 | PRINT r0 | HALT</code>\n"
+            "Можно разделять строки через <code>|</code> или многострочным сообщением."
         )
         return
 
@@ -237,7 +230,7 @@ async def cmd_run(message: Message, command: CommandObject) -> None:
     args = command.args
     if not args:
         await message.answer(
-            "Использование: <code>/run MOV r0 42 ; PRINT r0 ; HALT</code>\n\n"
+            "Использование: <code>/run MOV r0 42 | PRINT r0 | HALT</code>\n\n"
             "Собирает и сразу выполняет программу в изолированной среде."
         )
         return

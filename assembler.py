@@ -7,6 +7,7 @@ OPCODES = {
     'JMP': 8, 'JZ': 9, 'JNZ': 10, 'CALL': 11,
     'RET': 12, 'STORE': 13, 'LOAD': 14,
     'DRAW': 15, 'PRINT': 16,
+    'CLS': 17, 'RAND': 18, 'KEY': 19,
 }
 
 INSTR_ARGS = {
@@ -27,6 +28,9 @@ INSTR_ARGS = {
     'LOAD': ['reg', 'addr'],
     'DRAW': ['reg', 'reg', 'reg'],
     'PRINT': ['reg'],
+    'CLS': [],
+    'RAND': ['reg', 'val'],
+    'KEY': ['reg'],
 }
 
 OPCODE_NAMES = {v: k for k, v in OPCODES.items()}
