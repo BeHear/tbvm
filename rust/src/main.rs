@@ -4,6 +4,7 @@ mod vm;
 
 use std::env;
 use std::fs;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use vm::Vm;
 
@@ -16,10 +17,15 @@ Usage:
   tbvm disasm <file>           Disassemble bytecode to text
 ";
 
+const MAX_BYTECODE_SIZE: usize = 4 * 1024 * 1024;
+
 fn read_bytecode(path: &str) -> Result<Vec<i32>, String> {
     let meta = fs::metadata(path).map_err(|e| format!("cannot access '{}': {}", path, e))?;
     if !meta.is_file() {
         return Err(format!("'{}' is not a regular file", path));
+    }
+    if meta.len() > MAX_BYTECODE_SIZE as u64 {
+        return Err(format!("bytecode too large (max {} bytes)", MAX_BYTECODE_SIZE));
     }
     let raw = fs::read(path).map_err(|e| format!("cannot read '{}': {}", path, e))?;
     if raw.len() % 4 != 0 {
@@ -34,14 +40,22 @@ fn read_bytecode(path: &str) -> Result<Vec<i32>, String> {
 fn cmd_run(path: &str) -> Result<(), String> {
     let code = read_bytecode(path)?;
     let mut vm = Vm::new(code);
-    vm.run().map_err(|e| format!("VM error: {}", e))?;
+    let exit_code = vm.run().map_err(|e| format!("VM error: {}", e))?;
 
     let out_path = Path::new("output.ppm");
-    if out_path.is_symlink() {
-        return Err("output.ppm is a symlink, refusing to overwrite".into());
-    }
-    vm.write_ppm("output.ppm")
+    let f = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(out_path)
+        .map_err(|e| format!("cannot create output.ppm: {}", e))?;
+    vm.write_ppm_file(&f)
         .map_err(|e| format!("cannot write output.ppm: {}", e))?;
+
+    if exit_code != 0 {
+        eprintln!("Exit code: {}", exit_code);
+    }
     Ok(())
 }
 
@@ -119,6 +133,8 @@ fn cmd_isolate(path: &str, dir: &str) -> Result<(), String> {
 const OP_NAMES: &[&str] = &[
     "HALT", "MOV", "ADD", "ADDI", "SUB", "SUBI", "CMP", "CMPI",
     "JMP", "JZ", "JNZ", "CALL", "RET", "STORE", "LOAD", "DRAW", "PRINT",
+    "CLS", "RAND", "KEY",
+    "INT", "IRET", "CLI", "STI", "SETMODE", "EXIT", "TIMER",
 ];
 
 const OP_ARGS: &[&[&str]] = &[
@@ -139,6 +155,16 @@ const OP_ARGS: &[&[&str]] = &[
     &["reg", "addr"],                 // LOAD
     &["reg", "reg", "reg"],           // DRAW
     &["reg"],                         // PRINT
+    &[],                              // CLS
+    &["reg", "val"],                  // RAND
+    &["reg"],                         // KEY
+    &["val"],                         // INT
+    &[],                              // IRET
+    &[],                              // CLI
+    &[],                              // STI
+    &["reg"],                         // SETMODE
+    &["reg"],                         // EXIT
+    &["val"],                         // TIMER
 ];
 
 fn cmd_disasm(path: &str) -> Result<(), String> {
@@ -153,6 +179,9 @@ fn cmd_disasm(path: &str) -> Result<(), String> {
         }
         let name = OP_NAMES[raw];
         let arg_types = OP_ARGS[raw];
+        if ip + arg_types.len() > code.len() {
+            return Err("unexpected end of code in disassembly".into());
+        }
         let args = &code[ip..ip + arg_types.len()];
         ip += args.len();
 

@@ -1,4 +1,5 @@
 use crate::error::VmError;
+use std::fs::File;
 use std::io::Read;
 
 const VRAM_W: usize = 128;
@@ -6,6 +7,11 @@ const VRAM_H: usize = 128;
 const NUM_REGS: usize = 8;
 const MEM_SIZE: usize = 1024;
 const STACK_SIZE: usize = 256;
+const INT_STACK_SIZE: usize = 64;
+const FAULT_VEC_INVALID_OP: usize = 0;
+const FAULT_VEC_PRIVILEGE: usize = 1;
+const _FAULT_VEC_MEMORY: usize = 2; // reserved for memory bounds fault
+const FAULT_VEC_TIMER: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Op {
@@ -13,6 +19,7 @@ enum Op {
     Cmp, Cmpi, Jmp, Jz, Jnz,
     Call, Ret, Store, Load, Draw, Print,
     Cls, Rand, Key,
+    Int, Iret, Cli, Sti, Setmode, Exit, Timer,
 }
 
 pub struct Vm {
@@ -25,6 +32,14 @@ pub struct Vm {
     code: Vec<i32>,
     ip: usize,
     rng_state: u32,
+
+    mode: u8,
+    int_enabled: bool,
+    ivt_base: usize,
+    int_stack: [usize; INT_STACK_SIZE],
+    int_sp: usize,
+    timer_interval: i32,
+    timer_counter: i32,
 }
 
 fn decode_op(val: i32) -> Option<Op> {
@@ -35,6 +50,8 @@ fn decode_op(val: i32) -> Option<Op> {
         12 => Op::Ret, 13 => Op::Store, 14 => Op::Load,
          15 => Op::Draw, 16 => Op::Print,
          17 => Op::Cls, 18 => Op::Rand, 19 => Op::Key,
+         20 => Op::Int, 21 => Op::Iret, 22 => Op::Cli, 23 => Op::Sti,
+         24 => Op::Setmode, 25 => Op::Exit, 26 => Op::Timer,
         _ => return None,
     })
 }
@@ -56,6 +73,14 @@ impl Vm {
             code,
             ip: 0,
             rng_state: seed,
+
+            mode: 0,
+            int_enabled: false,
+            ivt_base: 0,
+            int_stack: [0; INT_STACK_SIZE],
+            int_sp: 0,
+            timer_interval: 0,
+            timer_counter: 0,
         }
     }
 
@@ -92,16 +117,65 @@ impl Vm {
         Ok(t)
     }
 
-    pub fn run(&mut self) -> Result<(), VmError> {
+    fn trigger_interrupt(&mut self, vector: usize) -> Result<(), VmError> {
+        if vector >= 256 {
+            return Err(VmError::InvalidInterrupt(vector));
+        }
+        if self.int_sp + 3 > INT_STACK_SIZE {
+            return Err(VmError::IntStackOverflow);
+        }
+        let ivt_addr = self.ivt_base + vector;
+        if ivt_addr >= MEM_SIZE {
+            return Err(VmError::InvalidInterrupt(vector));
+        }
+        let handler = self.memory[ivt_addr] as usize;
+        if handler >= self.code.len() || handler == 0 {
+            return Err(VmError::UnhandledInterrupt(vector));
+        }
+        self.int_stack[self.int_sp] = self.ip;
+        self.int_stack[self.int_sp + 1] = self.mode as usize;
+        self.int_stack[self.int_sp + 2] = self.int_enabled as usize;
+        self.int_sp += 3;
+        self.mode = 0;
+        self.int_enabled = false;
+        self.ip = handler;
+        Ok(())
+    }
+
+    fn fault(&mut self, vector: usize) -> Result<(), VmError> {
+        if self.mode == 0 {
+            return Err(VmError::DoubleFault(vector));
+        }
+        self.trigger_interrupt(vector)
+    }
+
+    pub fn run(&mut self) -> Result<i32, VmError> {
         loop {
             if self.ip >= self.code.len() {
-                return Ok(());
+                return Ok(0);
             }
             let raw = self.read()?;
-            let op = decode_op(raw).ok_or(VmError::InvalidOpcode(raw, self.ip - 1))?;
+            let op = match decode_op(raw) {
+                Some(op) => op,
+                None => {
+                    if self.mode != 0 && self.ivt_base + FAULT_VEC_INVALID_OP < MEM_SIZE {
+                        let handler = self.memory[self.ivt_base + FAULT_VEC_INVALID_OP];
+                        if handler != 0 {
+                            self.fault(FAULT_VEC_INVALID_OP)?;
+                            continue;
+                        }
+                    }
+                    return Err(VmError::InvalidOpcode(raw, self.ip - 1));
+                }
+            };
 
             match op {
-                Op::Halt => return Ok(()),
+                Op::Halt => return Ok(0),
+
+                Op::Exit => {
+                    let r = self.reg_idx()?;
+                    return Ok(self.regs[r]);
+                }
 
                 Op::Mov => {
                     let r = self.reg_idx()?;
@@ -112,23 +186,23 @@ impl Vm {
                 Op::Add => {
                     let r1 = self.reg_idx()?;
                     let r2 = self.reg_idx()?;
-                    self.regs[r1] += self.regs[r2];
+                    self.regs[r1] = self.regs[r1].wrapping_add(self.regs[r2]);
                 }
 
                 Op::Addi => {
                     let r1 = self.reg_idx()?;
-                    self.regs[r1] += self.read()?;
+                    self.regs[r1] = self.regs[r1].wrapping_add(self.read()?);
                 }
 
                 Op::Sub => {
                     let r1 = self.reg_idx()?;
                     let r2 = self.reg_idx()?;
-                    self.regs[r1] -= self.regs[r2];
+                    self.regs[r1] = self.regs[r1].wrapping_sub(self.regs[r2]);
                 }
 
                 Op::Subi => {
                     let r1 = self.reg_idx()?;
-                    self.regs[r1] -= self.read()?;
+                    self.regs[r1] = self.regs[r1].wrapping_sub(self.read()?);
                 }
 
                 Op::Cmp => {
@@ -226,13 +300,83 @@ impl Vm {
                         Err(_) => self.regs[r] = -1,
                     }
                 }
+
+                Op::Int => {
+                    let vec = self.read()? as usize;
+                    self.trigger_interrupt(vec)?;
+                }
+
+                Op::Iret => {
+                    if self.mode != 0 {
+                        self.fault(FAULT_VEC_PRIVILEGE)?;
+                        continue;
+                    }
+                    if self.int_sp < 3 {
+                        return Err(VmError::IntStackUnderflow);
+                    }
+                    self.int_sp -= 3;
+                    self.ip = self.int_stack[self.int_sp];
+                    self.mode = self.int_stack[self.int_sp + 1] as u8;
+                    self.int_enabled = self.int_stack[self.int_sp + 2] != 0;
+                }
+
+                Op::Cli => {
+                    self.int_enabled = false;
+                }
+
+                Op::Sti => {
+                    self.int_enabled = true;
+                }
+
+                Op::Setmode => {
+                    if self.mode != 0 {
+                        self.fault(FAULT_VEC_PRIVILEGE)?;
+                        continue;
+                    }
+                    let r = self.reg_idx()?;
+                    let m = self.regs[r];
+                    if m != 0 && m != 1 {
+                        return Err(VmError::InvalidMode(m));
+                    }
+                    self.mode = m as u8;
+                }
+
+                Op::Timer => {
+                    if self.mode != 0 {
+                        self.fault(FAULT_VEC_PRIVILEGE)?;
+                        continue;
+                    }
+                    let n = self.read()?;
+                    self.timer_interval = if n > 0 { n } else { 0 };
+                    self.timer_counter = 0;
+                }
+            }
+
+            if self.int_enabled && self.timer_interval > 0 {
+                self.timer_counter += 1;
+                if self.timer_counter >= self.timer_interval {
+                    self.timer_counter = 0;
+                    let ivt_addr = self.ivt_base + FAULT_VEC_TIMER;
+                    if ivt_addr < MEM_SIZE && self.memory[ivt_addr] != 0 {
+                        self.trigger_interrupt(FAULT_VEC_TIMER)?;
+                    }
+                }
             }
         }
     }
 
+    #[allow(dead_code)]
     pub fn write_ppm(&self, path: &str) -> std::io::Result<()> {
-        use std::io::Write;
         let mut f = std::fs::File::create(path)?;
+        self.write_ppm_inner(&mut f)
+    }
+
+    pub fn write_ppm_file(&self, f: &File) -> std::io::Result<()> {
+        let mut f = f.try_clone()?;
+        self.write_ppm_inner(&mut f)
+    }
+
+    fn write_ppm_inner(&self, f: &mut impl std::io::Write) -> std::io::Result<()> {
         write!(f, "P3\n{} {}\n255\n", VRAM_W, VRAM_H)?;
         for &p in &self.vram {
             write!(f, "{} {} {} ", (p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF)?;

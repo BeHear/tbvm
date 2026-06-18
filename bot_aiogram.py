@@ -2,6 +2,7 @@ import asyncio
 import io
 import logging
 import os
+import stat
 import tempfile
 import time
 
@@ -76,7 +77,6 @@ VM_CMD = None
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 for _bin, _args in [
     (os.path.join(_SCRIPT_DIR, "tbvm"), ["run"]),
-    (os.path.join(_SCRIPT_DIR, "vm"), []),
     (os.path.join(_SCRIPT_DIR, "rust/target/release/tbvm"), ["run"]),
 ]:
     if os.path.isfile(_bin):
@@ -130,10 +130,14 @@ async def _run_sandboxed(data: bytes) -> dict:
 
         ppm_data = None
         ppm_path = os.path.join(tmpdir, "output.ppm")
-        if os.path.isfile(ppm_path):
-            sz = os.path.getsize(ppm_path)
-            if 0 < sz < 512 * 1024:
-                ppm_data = open(ppm_path, "rb").read()
+        if os.path.isfile(ppm_path) and not os.path.islink(ppm_path):
+            st = os.stat(ppm_path)
+            if stat.S_ISREG(st.st_mode) and 0 < st.st_size < 512 * 1024:
+                fd = os.open(ppm_path, os.O_RDONLY | os.O_NOFOLLOW)
+                try:
+                    ppm_data = os.read(fd, st.st_size)
+                finally:
+                    os.close(fd)
 
         return {
             "stdout": stdout,
@@ -201,6 +205,11 @@ async def cmd_asm(message: Message, command: CommandObject) -> None:
         )
         return
 
+    remaining = _check_rate_limit(message.from_user.id)
+    if remaining is not None:
+        await message.answer(f"⏳ Подожди {remaining}с перед следующей сборкой")
+        return
+
     code = _normalize_code(args)
     try:
         data = asm.assemble(code)
@@ -214,8 +223,9 @@ async def cmd_asm(message: Message, command: CommandObject) -> None:
             await message.answer(f"<pre>{dis}</pre>")
     except AssembleError as e:
         await message.answer(f"❌ {e}")
-    except Exception as e:
-        await message.answer(f"❌ Internal error: {e}")
+    except Exception:
+        logging.exception("Internal error in /asm handler")
+        await message.answer("❌ Internal error")
 
 
 @dp.message(Command("run"))
@@ -255,8 +265,9 @@ async def cmd_run(message: Message, command: CommandObject) -> None:
     except FileNotFoundError:
         await msg.edit_text("❌ VM бинарник не найден по пути: " + " ".join(VM_CMD))
         return
-    except Exception as e:
-        await msg.edit_text(f"❌ Ошибка выполнения: {e}")
+    except Exception:
+        logging.exception("Error in /run execution")
+        await msg.edit_text("❌ Ошибка выполнения")
         return
 
     lines = []
@@ -328,8 +339,9 @@ async def handle_file(message: Message, bot: Bot) -> None:
             await message.answer(f"<pre>{dis}</pre>")
     except AssembleError as e:
         await msg.edit_text(f"❌ {e}")
-    except Exception as e:
-        await msg.edit_text(f"❌ Internal error: {e}")
+    except Exception:
+        logging.exception("Internal error in file handler")
+        await msg.edit_text("❌ Internal error")
 
 
 async def main() -> None:

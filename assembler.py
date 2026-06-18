@@ -8,6 +8,8 @@ OPCODES = {
     'RET': 12, 'STORE': 13, 'LOAD': 14,
     'DRAW': 15, 'PRINT': 16,
     'CLS': 17, 'RAND': 18, 'KEY': 19,
+    'INT': 20, 'IRET': 21, 'CLI': 22, 'STI': 23,
+    'SETMODE': 24, 'EXIT': 25, 'TIMER': 26,
 }
 
 INSTR_ARGS = {
@@ -31,6 +33,13 @@ INSTR_ARGS = {
     'CLS': [],
     'RAND': ['reg', 'val'],
     'KEY': ['reg'],
+    'INT': ['val'],
+    'IRET': [],
+    'CLI': [],
+    'STI': [],
+    'SETMODE': ['reg'],
+    'EXIT': ['reg'],
+    'TIMER': ['val'],
 }
 
 OPCODE_NAMES = {v: k for k, v in OPCODES.items()}

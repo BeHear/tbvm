@@ -1,14 +1,14 @@
 # TBVM — Tiny Basic Virtual Machine
 
-Экспериментальная виртуальная машина с минимальным набором инструкций, графическим выводом (128×128 VRAM, PPM) и ассемблером. Реализована на **C** и **Rust** — выбирай любой вариант.
+Экспериментальная виртуальная машина с минимальным набором инструкций, графическим выводом (128×128 VRAM, PPM) и ассемблером. Ядро написано на **Rust** с нулевым `unsafe` кодом.
 
 ## Возможности
 
 - **8 регистров** (r0–r7), **1024 слова** памяти, **256 вызовов** стека
-- **17 инструкций**: MOV, ADD/ADDI, SUB/SUBI, CMP/CMPI, JMP/JZ/JNZ, CALL/RET, STORE/LOAD, DRAW, PRINT, HALT
+- **17 инструкций**: MOV, ADD/ADDI, SUB/SUBI, CMP/CMPI, JMP/JZ/JNZ, CALL/RET, STORE/LOAD, DRAW, PRINT, HALT, CLS, RAND, KEY
 - **Графический вывод** 128×128 пикселей в PPM (портлет) через инструкцию DRAW
 - **Rust VM** — type-safe, zero `unsafe`, гарантированная защита памяти на уровне компилятора
-- **Изолированный движок** — Windows (Job Object) / Linux (setrlimit + fork)
+- **Режимы kernel/user** — защищённые инструкции, IVT, INT/IRET, таймер — можно писать свою ОС
 - **Ассемблер** (Python) — превращает текст в байткод
 - **Telegram бот** — создание программ прямо из мессенджера
 - **[Документация](documentation.md)** — полный справочник по архитектуре ВМ
@@ -27,10 +27,7 @@ data = a.assemble('MOV r0 42\\nPRINT r0\\nHALT')
 open('program.bin', 'wb').write(data)
 "
 
-# C-VM
-./vm program.bin
-
-# Rust-VM (type-safe)
+# Исполнение
 ./tbvm run program.bin
 ```
 
@@ -55,6 +52,16 @@ open('program.bin', 'wb').write(data)
 | `LOAD rN addr` | rN = memory[addr] |
 | `DRAW rX rY rC` | Пиксель в (regs[rX], regs[rY]) цвета regs[rC] |
 | `PRINT rN` | Вывод regs[rN] |
+| `CLS` | Очистка VRAM |
+| `RAND rN mod` | rN = случайное число 0..mod-1 |
+| `KEY rN` | Чтение клавиши (ASCII) в rN |
+| `INT vec` | Программное прерывание `vec` |
+| `IRET` | Возврат из прерывания |
+| `CLI` | Запретить прерывания |
+| `STI` | Разрешить прерывания |
+| `SETMODE rN` | Установить режим (0=kernel, 1=user) |
+| `EXIT rN` | Останов с кодом `regs[N]` |
+| `TIMER n` | Установить интервал таймера (n инструкций) |
 
 ## Примеры
 
@@ -98,108 +105,56 @@ HALT
 
 ## Telegram бот
 
-Позволяет ассемблировать программы в байткод TBVM прямо из Telegram и скачать `.bin` файл.
+Позволяет ассемблировать программы в байткод TBVM прямо из Telegram, выполнять их в песочнице и получать `.bin` файл.
 
-### Для новичков: пошаговая инструкция
-
-**Шаг 1. Установи Python** (если ещё не установлен)
-
-Проверь:
-```bash
-python3 --version
-```
-Должно быть Python 3.8 или новее. Если нет — скачай с [python.org](https://python.org).
-
-**Шаг 2. Скачай проект**
-
-```bash
-git clone https://github.com/BeHear/tbvm.git
-cd tbvm
-```
-
-**Шаг 3. Установи зависимости**
+### Установка и запуск
 
 ```bash
 pip install -r requirements.txt
+export TBVM_BOT_TOKEN=ваш_токен
+python bot_aiogram.py
 ```
-Эта команда установит библиотеку `python-telegram-bot`.
-
-**Шаг 4. Создай бота в Telegram**
-
-1. Открой Telegram, найди [@BotFather](https://t.me/BotFather)
-2. Напиши `/newbot`
-3. BotFather попросит имя — введи любое, например `TBVM Assembler`
-4. Потом попросит username — введи что-то вроде `tbvm_assembler_bot`
-5. Готово! BotFather пришлёт **токен** — строку вида `1234567890:ABCdefGHIjklmNOpqrsTUVwxyz`
-
-**Шаг 5. Запусти бота**
-
-```bash
-export TBVM_BOT_TOKEN=1234567890:ABCdefGHIjklmNOpqrsTUVwxyz
-python bot.py
-```
-Замени `1234567890:...` на свой токен.
-
-**Шаг 6. Пользуйся**
-
-Открой Telegram, найди своего бота и напиши `/start`.
 
 ### Команды бота
 
 | Команда | Что делает |
 |---------|-----------|
 | `/start` | Приветствие |
-| `/help` | Список всех инструкций с описанием |
-| `/asm MOV r0 42 ; PRINT r0 ; HALT` | Собрать программу и получить `.bin` файл |
-| `/example` | Пример программы (обратный отсчёт) |
+| `/help` | Справка по всем 17 инструкциям |
+| `/asm <code>` | Собрать → program.bin |
+| `/run <code>` | Собрать и выполнить в песочнице |
+| `/example` | Пример программы |
 
-### Пример использования в боте
-
-Напиши боту:
-```
-/asm MOV r0 10 & .loop PRINT r0 & SUBI r0 1 & CMPI r0 0 & JNZ .loop & HALT
-```
-(символ `;` разделяет инструкции. В Telegram можно писать весь код в одну строку через `;` или отправлять многострочным сообщением.)
-
-Бот вернёт файл `program.bin` — его можно запустить на VM:
-```bash
-./vm program.bin
-```
-
-## Rust VM
-
-Реализация на Rust с нулевым `unsafe` кодом — все обращения к памяти, регистрам и стеку проверяются на этапе компиляции и рантайме.
+## CLI
 
 ```bash
-# Сборка
-make tbvm          # или: cargo build --release --manifest-path rust/Cargo.toml
-
 # Исполнение
 ./tbvm run program.bin
 
 # Дизассемблирование
 ./tbvm disasm program.bin
 
-# Изолированный запуск (песочница)
+# Изолированный запуск (для shell-команд)
 ./tbvm isolate program.bin /tmp/sandbox_dir
 ```
 
-Отличия от C-VM:
-- Векторный код вместо сырых массивов — никаких переполнений буфера
-- `enum Op` с pattern matching — никаких switch без default
-- `Result<T, VmError>` вместо fprintf — все ошибки возвращаются, а не печатаются
-- `try_wait()` с таймаутом — корректное завершение процессов в песочнице
+### Поддержка ОС
+
+TBVM поддерживает режимы kernel/user, таблицу векторов прерываний (IVT) в памяти,
+инструкции INT/IRET/CLI/STI/SETMODE/EXIT/TIMER и fault-ы (invalid opcode,
+privilege violation, timer). Можно реализовать простое ОС с системными вызовами,
+защитой памяти (по адресам) и прерываниями по таймеру.
 
 ## Структура проекта
 
 ```
 tbvm/
-├── vm.c               # C VM (кросс-платформенная)
-├── iso_engine.c       # C изолятор (Windows/Linux)
 ├── assembler.py       # Ассемблер/дизассемблер
-├── bot.py             # Telegram бот
-├── Makefile           # Сборка
-├── rust/              # Rust VM
+├── bot_aiogram.py     # Telegram бот (aiogram)
+├── bot.py             # Telegram бот (python-telegram-bot, легаси)
+├── test_bot.py        # Тесты
+├── Makefile           # Сборка Rust
+├── rust/              # Rust VM (ядро)
 │   ├── Cargo.toml
 │   └── src/
 │       ├── main.rs    # CLI (run, isolate, disasm)

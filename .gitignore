@@ -3,11 +3,8 @@
 *.obj
 
 # Executables
-vm
-vm.exe
-iso_engine.exe
-iso_engine
 tbvm
+tbvm.exe
 
 # Output
 output.ppm
@@ -33,7 +30,6 @@ venv/
 .idea/
 *.swp
 *.swo
-
 
 # Added by cargo
 

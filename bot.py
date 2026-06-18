@@ -92,8 +92,9 @@ async def cmd_asm(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"```\n{dis}\n```")
     except AssembleError as e:
         await update.message.reply_text(f"❌ {e}")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Internal error: {e}")
+    except Exception:
+        logging.exception("Internal error in /asm handler")
+        await update.message.reply_text("❌ Internal error")
 
 
 SUPPORTED_EXTENSIONS = {'.s', '.asm', '.txt'}
@@ -140,8 +141,9 @@ async def handle_file(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"```\n{dis}\n```")
     except AssembleError as e:
         await msg.edit_text(f"❌ {e}")
-    except Exception as e:
-        await msg.edit_text(f"❌ Internal error: {e}")
+    except Exception:
+        logging.exception("Internal error in file handler")
+        await msg.edit_text("❌ Internal error")
 
 
 async def cmd_example(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
