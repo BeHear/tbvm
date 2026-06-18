@@ -75,11 +75,12 @@ MAX_FILE_SIZE = 64 * 1024
 
 VM_CMD = None
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-for _bin, _args in [
-    (os.path.join(_SCRIPT_DIR, "tbvm"), ["run"]),
+_VM_SEARCH_PATHS = [
     (os.path.join(_SCRIPT_DIR, "rust/target/release/tbvm"), ["run"]),
-]:
-    if os.path.isfile(_bin):
+    (os.path.join(_SCRIPT_DIR, "tbvm"), ["run"]),
+]
+for _bin, _args in _VM_SEARCH_PATHS:
+    if os.path.isfile(_bin) and os.access(_bin, os.X_OK):
         VM_CMD = [_bin] + _args
         break
 
@@ -263,7 +264,10 @@ async def cmd_run(message: Message, command: CommandObject) -> None:
     try:
         result = await _run_sandboxed(data)
     except FileNotFoundError:
-        await msg.edit_text("❌ VM бинарник не найден по пути: " + " ".join(VM_CMD))
+        await msg.edit_text(
+            "❌ VM бинарник не найден.\n"
+            "Запусти <code>make</code> в директории проекта для сборки."
+        )
         return
     except Exception:
         logging.exception("Error in /run execution")
@@ -351,9 +355,14 @@ async def main() -> None:
         return
 
     if VM_CMD:
-        logging.info("VM binary: %s", " ".join(VM_CMD))
+        logging.info("VM binary found: %s", " ".join(VM_CMD))
     else:
-        logging.warning("No VM binary found — /run will be unavailable")
+        _search_log = "\n".join(f"  {b} {' '.join(a)}" for b, a in _VM_SEARCH_PATHS)
+        logging.warning(
+            "No VM binary found — /run will be unavailable.\n"
+            "Searched:\n%s\nRun 'make' in project directory to build.",
+            _search_log,
+        )
 
     bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
     await dp.start_polling(bot)
