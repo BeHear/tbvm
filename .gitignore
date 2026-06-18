@@ -7,7 +7,7 @@ tbvm
 tbvm.exe
 
 # Output
-output.ppm
+output.png
 
 # Python
 __pycache__/

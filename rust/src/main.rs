@@ -42,16 +42,16 @@ fn cmd_run(path: &str) -> Result<(), String> {
     let mut vm = Vm::new(code);
     let exit_code = vm.run().map_err(|e| format!("VM error: {}", e))?;
 
-    let out_path = Path::new("output.ppm");
+    let out_path = Path::new("output.png");
     let f = fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .custom_flags(libc::O_NOFOLLOW)
         .open(out_path)
-        .map_err(|e| format!("cannot create output.ppm: {}", e))?;
-    vm.write_ppm_file(&f)
-        .map_err(|e| format!("cannot write output.ppm: {}", e))?;
+        .map_err(|e| format!("cannot create output.png: {}", e))?;
+    vm.write_png_file(&f)
+        .map_err(|e| format!("cannot write output.png: {}", e))?;
 
     if exit_code != 0 {
         eprintln!("Exit code: {}", exit_code);

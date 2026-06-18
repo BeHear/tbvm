@@ -366,21 +366,36 @@ impl Vm {
     }
 
     #[allow(dead_code)]
-    pub fn write_ppm(&self, path: &str) -> std::io::Result<()> {
-        let mut f = std::fs::File::create(path)?;
-        self.write_ppm_inner(&mut f)
+    pub fn write_png(&self, path: &str) -> std::io::Result<()> {
+        let raw = self.encode_png_inner()?;
+        std::fs::write(path, &raw)
     }
 
-    pub fn write_ppm_file(&self, f: &File) -> std::io::Result<()> {
+    pub fn write_png_file(&self, f: &File) -> std::io::Result<()> {
+        let raw = self.encode_png_inner()?;
+        use std::io::Write;
         let mut f = f.try_clone()?;
-        self.write_ppm_inner(&mut f)
+        f.write_all(&raw)
     }
 
-    fn write_ppm_inner(&self, f: &mut impl std::io::Write) -> std::io::Result<()> {
-        write!(f, "P3\n{} {}\n255\n", VRAM_W, VRAM_H)?;
-        for &p in &self.vram {
-            write!(f, "{} {} {} ", (p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF)?;
+    fn encode_png_inner(&self) -> std::io::Result<Vec<u8>> {
+        use image::RgbImage;
+        use std::io::Cursor;
+
+        let mut img = RgbImage::new(VRAM_W as u32, VRAM_H as u32);
+        for (i, &p) in self.vram.iter().enumerate() {
+            let x = (i % VRAM_W) as u32;
+            let y = (i / VRAM_W) as u32;
+            img.put_pixel(x, y, image::Rgb([
+                ((p >> 16) & 0xFF) as u8,
+                ((p >> 8) & 0xFF) as u8,
+                (p & 0xFF) as u8,
+            ]));
         }
-        Ok(())
+
+        let mut buf = Cursor::new(Vec::new());
+        img.write_to(&mut buf, image::ImageFormat::Png)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        Ok(buf.into_inner())
     }
 }

@@ -290,12 +290,12 @@ def sandbox_timeout_kills_infinite_loop():
 
 
 @test
-def sandbox_ppm_captured():
+def sandbox_png_captured():
     async def t():
         data = asm.assemble("MOV r0 10\nMOV r1 10\nMOV r2 255\nDRAW r0 r1 r2\nHALT")
         r = await _run_sandboxed(data)
-        assert r["ppm"] is not None, "no PPM"
-        assert len(r["ppm"]) > 100, f"PPM too small: {len(r['ppm'])}"
+        assert r["png"] is not None, "no PNG"
+        assert len(r["png"]) > 100, f"PNG too small: {len(r['png'])}"
     asyncio.run(t())
 
 
@@ -370,12 +370,12 @@ def asm_cls_round_trip():
 
 
 @test
-def sandbox_cls_produces_ppm():
+def sandbox_cls_produces_png():
     async def t():
         data = asm.assemble("CLS\nHALT")
         r = await _run_sandboxed(data)
         assert not r["timeout"]
-        assert r["ppm"] is not None, "no PPM on CLS"
+        assert r["png"] is not None, "no PNG on CLS"
     asyncio.run(t())
 
 

@@ -129,14 +129,14 @@ async def _run_sandboxed(data: bytes) -> dict:
             stdout, stderr = b"", b""
             timed_out = True
 
-        ppm_data = None
-        ppm_path = os.path.join(tmpdir, "output.ppm")
-        if os.path.isfile(ppm_path) and not os.path.islink(ppm_path):
-            st = os.stat(ppm_path)
+        png_data = None
+        png_path = os.path.join(tmpdir, "output.png")
+        if os.path.isfile(png_path) and not os.path.islink(png_path):
+            st = os.stat(png_path)
             if stat.S_ISREG(st.st_mode) and 0 < st.st_size < 512 * 1024:
-                fd = os.open(ppm_path, os.O_RDONLY | os.O_NOFOLLOW)
+                fd = os.open(png_path, os.O_RDONLY | os.O_NOFOLLOW)
                 try:
-                    ppm_data = os.read(fd, st.st_size)
+                    png_data = os.read(fd, st.st_size)
                 finally:
                     os.close(fd)
 
@@ -144,7 +144,7 @@ async def _run_sandboxed(data: bytes) -> dict:
             "stdout": stdout,
             "stderr": stderr,
             "timeout": timed_out,
-            "ppm": ppm_data,
+            "png": png_data,
         }
 
 
@@ -295,10 +295,10 @@ async def cmd_run(message: Message, command: CommandObject) -> None:
 
     await msg.edit_text(text)
 
-    if result["ppm"]:
+    if result["png"]:
         await message.answer_document(
-            document=BufferedInputFile(result["ppm"], filename="output.ppm"),
-            caption="🖼 VRAM (PPM)",
+            document=BufferedInputFile(result["png"], filename="output.png"),
+            caption="🖼 VRAM (PNG)",
         )
 
 
