@@ -97,15 +97,73 @@ HALT
 
 ## Telegram бот
 
-Позволяет ассемблировать программы прямо из Telegram.
+Позволяет ассемблировать программы в байткод TBVM прямо из Telegram и скачать `.bin` файл.
+
+### Для новичков: пошаговая инструкция
+
+**Шаг 1. Установи Python** (если ещё не установлен)
+
+Проверь:
+```bash
+python3 --version
+```
+Должно быть Python 3.8 или новее. Если нет — скачай с [python.org](https://python.org).
+
+**Шаг 2. Скачай проект**
+
+```bash
+git clone https://github.com/BeHear/tbvm.git
+cd tbvm
+```
+
+**Шаг 3. Установи зависимости**
 
 ```bash
 pip install -r requirements.txt
-export TBVM_BOT_TOKEN=ваш_токен
+```
+Эта команда установит библиотеку `python-telegram-bot`.
+
+**Шаг 4. Создай бота в Telegram**
+
+1. Открой Telegram, найди [@BotFather](https://t.me/BotFather)
+2. Напиши `/newbot`
+3. BotFather попросит имя — введи любое, например `TBVM Assembler`
+4. Потом попросит username — введи что-то вроде `tbvm_assembler_bot`
+5. Готово! BotFather пришлёт **токен** — строку вида `1234567890:ABCdefGHIjklmNOpqrsTUVwxyz`
+
+**Шаг 5. Запусти бота**
+
+```bash
+export TBVM_BOT_TOKEN=1234567890:ABCdefGHIjklmNOpqrsTUVwxyz
 python bot.py
 ```
+Замени `1234567890:...` на свой токен.
 
-Команды: `/asm <код>`, `/help`, `/example`, `/start`
+**Шаг 6. Пользуйся**
+
+Открой Telegram, найди своего бота и напиши `/start`.
+
+### Команды бота
+
+| Команда | Что делает |
+|---------|-----------|
+| `/start` | Приветствие |
+| `/help` | Список всех инструкций с описанием |
+| `/asm MOV r0 42 ; PRINT r0 ; HALT` | Собрать программу и получить `.bin` файл |
+| `/example` | Пример программы (обратный отсчёт) |
+
+### Пример использования в боте
+
+Напиши боту:
+```
+/asm MOV r0 10 & .loop PRINT r0 & SUBI r0 1 & CMPI r0 0 & JNZ .loop & HALT
+```
+(символ `;` разделяет инструкции. В Telegram можно писать весь код в одну строку через `;` или отправлять многострочным сообщением.)
+
+Бот вернёт файл `program.bin` — его можно запустить на VM:
+```bash
+./vm program.bin
+```
 
 ## Rust VM
 
