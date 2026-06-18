@@ -123,7 +123,11 @@ async def handle_file(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     try:
         data = asm.assemble(code)
-        base = os.path.splitext(doc.file_name)[0]
+        base = os.path.splitext(os.path.basename(doc.file_name))[0]
+        # Strip any path traversal characters from the base name
+        base = "".join(c for c in base if c.isalnum() or c in "._- ")
+        if not base:
+            base = "program"
         caption = f"✅ {doc.file_name} → {base}.bin ({len(data)} bytes, {len(data)//4} instr)"
         await update.message.reply_document(
             document=io.BytesIO(data),

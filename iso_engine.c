@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #define RAM_SIZE 1024
 #define NUM_REGS 8
@@ -12,8 +13,11 @@ int regs[NUM_REGS];
 #ifdef _WIN32
 #include <windows.h>
 
-void run_command_safely(const char* cmd, const char* user_dir) {
-    SetCurrentDirectory(user_dir);
+void run_command_safely(const char* cmd, const char* resolved_dir) {
+    if (!SetCurrentDirectory(resolved_dir)) {
+        fprintf(stderr, "ERROR: cannot chdir to '%s'\n", resolved_dir);
+        return;
+    }
     HANDLE hJob = CreateJobObject(NULL, NULL);
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = { 0 };
     jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_PROCESS_TIME | JOB_OBJECT_LIMIT_JOB_MEMORY;
@@ -42,6 +46,7 @@ void run_command_safely(const char* cmd, const char* user_dir) {
 #include <sys/wait.h>
 #include <sys/resource.h>
 #include <signal.h>
+#include <limits.h>
 
 static pid_t child_pid = 0;
 
@@ -51,15 +56,17 @@ static void timeout_handler(int sig) {
         kill(child_pid, SIGKILL);
 }
 
-void run_command_safely(const char* cmd, const char* user_dir) {
+void run_command_safely(const char* cmd, const char* resolved_dir) {
     child_pid = fork();
     if (child_pid == 0) {
         struct rlimit cpu = { 5, 5 };
         struct rlimit mem = { 32 * 1024 * 1024, 32 * 1024 * 1024 };
         setrlimit(RLIMIT_CPU, &cpu);
         setrlimit(RLIMIT_AS, &mem);
-        if (user_dir)
-            chdir(user_dir);
+        if (chdir(resolved_dir) != 0) {
+            fprintf(stderr, "ERROR: cannot chdir to '%s'\n", resolved_dir);
+            _exit(127);
+        }
         execl("/bin/sh", "sh", "-c", cmd, (char*)NULL);
         _exit(127);
     } else if (child_pid > 0) {
@@ -81,7 +88,26 @@ static int safe_reg(int r) {
     return 1;
 }
 
-void run_vm(int* code, int size, const char* user_dir) {
+#ifndef _WIN32
+static int resolve_dir(const char* raw, char* out, size_t out_sz) {
+    if (raw == NULL) return -1;
+    char* r = realpath(raw, NULL);
+    if (r == NULL) {
+        fprintf(stderr, "ERROR: cannot resolve directory '%s'\n", raw);
+        return -1;
+    }
+    size_t len = strlen(r);
+    if (len >= out_sz) {
+        free(r);
+        return -1;
+    }
+    memcpy(out, r, len + 1);
+    free(r);
+    return 0;
+}
+#endif
+
+void run_vm(int* code, int size, const char* resolved_dir) {
     int ip = 0;
     while (ip < size) {
         int op = code[ip++];
@@ -107,9 +133,11 @@ void run_vm(int* code, int size, const char* user_dir) {
                     fprintf(stderr, "ERROR: EXEC string exceeds code bounds\n");
                     return;
                 }
+                fprintf(stderr, "WARNING: executing system command from bytecode\n");
                 printf(">> %s\n", cmd_str);
-                run_command_safely(cmd_str, user_dir);
+                run_command_safely(cmd_str, resolved_dir);
                 ip += (int)(slen / sizeof(int)) + 1;
+                if (ip > size) ip = size;
                 break;
             }
             case HALT:
@@ -127,15 +155,39 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    struct stat st;
+    if (stat(argv[1], &st) != 0) {
+        fprintf(stderr, "ERROR: cannot access '%s'\n", argv[1]);
+        return 1;
+    }
+    if (!S_ISREG(st.st_mode)) {
+        fprintf(stderr, "ERROR: '%s' is not a regular file\n", argv[1]);
+        return 1;
+    }
+
     FILE* f = fopen(argv[1], "rb");
     if (!f) {
         fprintf(stderr, "ERROR: cannot open '%s'\n", argv[1]);
         return 1;
     }
     int code[4096];
-    int size = (int)fread(code, sizeof(int), 4096, f);
+    size_t read_count = fread(code, sizeof(int), 4096, f);
+    if (read_count == 0 && ferror(f)) {
+        fprintf(stderr, "ERROR: read error on '%s'\n", argv[1]);
+        fclose(f);
+        return 1;
+    }
+    int size = (int)read_count;
     fclose(f);
 
+#ifdef _WIN32
     run_vm(code, size, argv[2]);
+#else
+    char resolved_dir[PATH_MAX];
+    if (resolve_dir(argv[2], resolved_dir, sizeof(resolved_dir)) != 0) {
+        return 1;
+    }
+    run_vm(code, size, resolved_dir);
+#endif
     return 0;
 }

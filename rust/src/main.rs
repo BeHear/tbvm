@@ -17,6 +17,10 @@ Usage:
 ";
 
 fn read_bytecode(path: &str) -> Result<Vec<i32>, String> {
+    let meta = fs::metadata(path).map_err(|e| format!("cannot access '{}': {}", path, e))?;
+    if !meta.is_file() {
+        return Err(format!("'{}' is not a regular file", path));
+    }
     let raw = fs::read(path).map_err(|e| format!("cannot read '{}': {}", path, e))?;
     if raw.len() % 4 != 0 {
         return Err("bytecode size must be multiple of 4".into());
@@ -31,7 +35,13 @@ fn cmd_run(path: &str) -> Result<(), String> {
     let code = read_bytecode(path)?;
     let mut vm = Vm::new(code);
     vm.run().map_err(|e| format!("VM error: {}", e))?;
-    vm.write_ppm("output.ppm").ok();
+
+    let out_path = Path::new("output.ppm");
+    if out_path.is_symlink() {
+        return Err("output.ppm is a symlink, refusing to overwrite".into());
+    }
+    vm.write_ppm("output.ppm")
+        .map_err(|e| format!("cannot write output.ppm: {}", e))?;
     Ok(())
 }
 
@@ -54,7 +64,11 @@ fn extract_exec_string(code: &[i32], offset: usize) -> Result<(String, usize), S
 
 fn cmd_isolate(path: &str, dir: &str) -> Result<(), String> {
     let code = read_bytecode(path)?;
-    let dir_path = Path::new(dir);
+
+    let dir_canon = fs::canonicalize(dir)
+        .map_err(|_| format!("cannot resolve directory '{}'", dir))?;
+    let dir_path = dir_canon.as_path();
+
     let mut ip = 0usize;
     let mut regs = [0i32; 8];
 
@@ -89,6 +103,7 @@ fn cmd_isolate(path: &str, dir: &str) -> Result<(), String> {
             }
             3 => {
                 let (cmd, words) = extract_exec_string(&code, ip)?;
+                eprintln!("WARNING: executing system command from bytecode: {}", cmd);
                 println!(">> {}", cmd);
                 sandbox::run_isolated(&cmd, dir_path)
                     .map_err(|e| format!("sandbox error: {:?}", e))?;

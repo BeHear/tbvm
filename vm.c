@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 
 #define VRAM_WIDTH 128
 #define VRAM_HEIGHT 128
@@ -162,17 +163,33 @@ int main(int argc, char** argv) {
         fprintf(stderr, "Usage: %s <bytecode.bin>\n", argv[0]);
         return 1;
     }
+
+    struct stat st;
+    if (stat(argv[1], &st) != 0) {
+        fprintf(stderr, "ERROR: cannot access '%s'\n", argv[1]);
+        return 1;
+    }
+    if (!S_ISREG(st.st_mode)) {
+        fprintf(stderr, "ERROR: '%s' is not a regular file\n", argv[1]);
+        return 1;
+    }
+
     FILE *f = fopen(argv[1], "rb");
     if (!f) {
         fprintf(stderr, "ERROR: cannot open '%s'\n", argv[1]);
         return 1;
     }
     int code[4096];
-    int size = fread(code, sizeof(int), 4096, f);
+    int size = (int)fread(code, sizeof(int), 4096, f);
     fclose(f);
 
     run(code, size);
 
+    struct stat out_st;
+    if (lstat("output.ppm", &out_st) == 0 && S_ISLNK(out_st.st_mode)) {
+        fprintf(stderr, "ERROR: output.ppm is a symlink, refusing to overwrite\n");
+        return 1;
+    }
     FILE *img = fopen("output.ppm", "wb");
     if (img) {
         fprintf(img, "P3\n%d %d\n255\n", VRAM_WIDTH, VRAM_HEIGHT);
