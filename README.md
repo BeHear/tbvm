@@ -1,23 +1,24 @@
 # TBVM — Tiny Basic Virtual Machine
 
-Экспериментальная виртуальная машина с минимальным набором инструкций, графическим выводом (128×128 VRAM, PPM) и ассемблером.
+Экспериментальная виртуальная машина с минимальным набором инструкций, графическим выводом (128×128 VRAM, PPM) и ассемблером. Реализована на **C** и **Rust** — выбирай любой вариант.
 
 ## Возможности
 
 - **8 регистров** (r0–r7), **1024 слова** памяти, **256 вызовов** стека
 - **17 инструкций**: MOV, ADD/ADDI, SUB/SUBI, CMP/CMPI, JMP/JZ/JNZ, CALL/RET, STORE/LOAD, DRAW, PRINT, HALT
 - **Графический вывод** 128×128 пикселей в PPM (портлет) через инструкцию DRAW
-- **Изолированный движок** (`iso_engine.c`) для Windows с песочницей через Job Object
+- **Rust VM** — type-safe, zero `unsafe`, гарантированная защита памяти на уровне компилятора
+- **Изолированный движок** — Windows (Job Object) / Linux (setrlimit + fork)
 - **Ассемблер** (Python) — превращает текст в байткод
 - **Telegram бот** — создание программ прямо из мессенджера
 
 ## Быстрый старт
 
 ```bash
-# Сборка VM
+# Сборка
 make
 
-# Ассемблирование программы
+# Ассемблирование
 python3 -c "
 from assembler import Assembler
 a = Assembler()
@@ -25,8 +26,11 @@ data = a.assemble('MOV r0 42\\nPRINT r0\\nHALT')
 open('program.bin', 'wb').write(data)
 "
 
-# Запуск
+# C-VM
 ./vm program.bin
+
+# Rust-VM (type-safe)
+./tbvm run program.bin
 ```
 
 ## Инструкции
@@ -103,16 +107,47 @@ python bot.py
 
 Команды: `/asm <код>`, `/help`, `/example`, `/start`
 
+## Rust VM
+
+Реализация на Rust с нулевым `unsafe` кодом — все обращения к памяти, регистрам и стеку проверяются на этапе компиляции и рантайме.
+
+```bash
+# Сборка
+make tbvm          # или: cargo build --release --manifest-path rust/Cargo.toml
+
+# Исполнение
+./tbvm run program.bin
+
+# Дизассемблирование
+./tbvm disasm program.bin
+
+# Изолированный запуск (песочница)
+./tbvm isolate program.bin /tmp/sandbox_dir
+```
+
+Отличия от C-VM:
+- Векторный код вместо сырых массивов — никаких переполнений буфера
+- `enum Op` с pattern matching — никаких switch без default
+- `Result<T, VmError>` вместо fprintf — все ошибки возвращаются, а не печатаются
+- `try_wait()` с таймаутом — корректное завершение процессов в песочнице
+
 ## Структура проекта
 
 ```
 tbvm/
-├── vm.c            # Основная VM (кросс-платформенная)
-├── iso_engine.c    # VM с Windows-песочницей
-├── assembler.py    # Ассемблер/дизассемблер
-├── bot.py          # Telegram бот
-├── Makefile        # Сборка
-├── programs/       # Примеры программ
+├── vm.c               # C VM (кросс-платформенная)
+├── iso_engine.c       # C изолятор (Windows/Linux)
+├── assembler.py       # Ассемблер/дизассемблер
+├── bot.py             # Telegram бот
+├── Makefile           # Сборка
+├── rust/              # Rust VM
+│   ├── Cargo.toml
+│   └── src/
+│       ├── main.rs    # CLI (run, isolate, disasm)
+│       ├── vm.rs      # VM engine (type-safe)
+│       ├── sandbox.rs # Песочница (fork + setrlimit)
+│       └── error.rs   # VmError
+├── programs/          # Примеры программ
 └── requirements.txt
 ```
 
