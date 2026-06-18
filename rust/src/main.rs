@@ -9,7 +9,7 @@ use std::path::Path;
 use vm::Vm;
 
 const USAGE: &str = "\
-TBVM — Tiny Basic Virtual Machine
+TBVM — Telegram Bot Virtual Machine
 
 Usage:
   tbvm run <file>              Execute bytecode file

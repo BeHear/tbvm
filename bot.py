@@ -59,7 +59,7 @@ HALT"""
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 *TBVM Assembler Bot*\n\n"
-        "Ассемблирует программы для Tiny Basic Virtual Machine.\n\n"
+        "Ассемблирует программы для Telegram Bot Virtual Machine.\n\n"
         "`/help` — справка\n"
         "`/asm MOV r0 42 ; PRINT r0 ; HALT` — собрать\n"
         "`/example` — пример\n\n"

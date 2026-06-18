@@ -1,4 +1,4 @@
-# TBVM — Tiny Basic Virtual Machine
+# TBVM — Telegram Bot Virtual Machine
 
 Экспериментальная виртуальная машина с минимальным набором инструкций, графическим выводом (128×128 VRAM, PPM) и ассемблером. Ядро написано на **Rust** с нулевым `unsafe` кодом.
 

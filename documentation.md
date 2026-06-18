@@ -1,4 +1,4 @@
-# TBVM — Tiny Basic Virtual Machine
+# TBVM — Telegram Bot Virtual Machine
 
 Архитектура 32-битной стековой ВМ с 8 регистрами и графическим выводом. Ядро написано на **Rust** (zero `unsafe`).
 

@@ -169,7 +169,7 @@ async def cmd_start(message: Message) -> None:
     prefix = "🏃 /run тоже работает!" if VM_CMD else "ℹ️ Собери проект (<code>make</code>) чтобы использовать /run"
     await message.answer(
         "🤖 <b>TBVM Assembler Bot</b>\n\n"
-        "Ассемблирует программы для Tiny Basic Virtual Machine.\n\n"
+        "Ассемблирует программы для Telegram Bot Virtual Machine.\n\n"
         "<code>/help</code> — справка\n"
         "<code>/asm MOV r0 42 | PRINT r0 | HALT</code> — собрать\n"
         "<code>/run MOV r0 42 | PRINT r0 | HALT</code> — собрать и выполнить\n"
