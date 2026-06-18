@@ -15,6 +15,8 @@ from assembler import Assembler, AssembleError
 TOKEN = os.environ.get("TBVM_BOT_TOKEN", "")
 asm = Assembler()
 
+import re
+
 HELP_TEXT = """\
 🤖 <b>TBVM Assembler Bot</b>
 
@@ -50,7 +52,7 @@ HELP_TEXT = """\
 Метки: <code>.имя</code>
 Комментарии: <code>;</code> или <code>#</code>
 Регистры: <code>r0</code>-<code>r7</code>
-Разделитель строк: <code>;</code>"""
+Разделитель строк: <code>;</code> (в середине строки)"""
 
 EXAMPLE_CODE = """\
 ; Countdown from 10 to 1
@@ -62,7 +64,17 @@ CMPI r0 0
 JNZ .loop
 HALT"""
 
-SUPPORTED_EXT = (".s", ".asm", ".txt")
+def _normalize_code(raw: str) -> str:
+    """Split inline `;` separators but preserve line-leading `;` comments."""
+    lines = raw.split("\n")
+    out = []
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith(";") or stripped.startswith("#"):
+            out.append(line)
+        else:
+            out.append(re.sub(r"\s*;\s*", "\n", line))
+    return "\n".join(out)
 MAX_FILE_SIZE = 64 * 1024
 
 # ── Sandboxed VM execution ──────────────────────────────────────────
@@ -196,7 +208,7 @@ async def cmd_asm(message: Message, command: CommandObject) -> None:
         )
         return
 
-    code = args.replace(";", "\n")
+    code = _normalize_code(args)
     try:
         data = asm.assemble(code)
         dis = asm.disassemble(data)
@@ -235,7 +247,7 @@ async def cmd_run(message: Message, command: CommandObject) -> None:
         await message.answer(f"⏳ Подожди {remaining}с перед следующим запуском")
         return
 
-    code = args.replace(";", "\n")
+    code = _normalize_code(args)
     try:
         data = asm.assemble(code)
     except AssembleError as e:
