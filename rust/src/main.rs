@@ -12,7 +12,8 @@ const USAGE: &str = "\
 TBVM — Telegram Bot Virtual Machine
 
 Usage:
-  tbvm run <file>              Execute bytecode file
+  tbvm run <file>              Execute bytecode file (PNG output)
+  tbvm gif <file>              Execute and produce animated GIF
   tbvm isolate <file> <dir>    Execute in sandboxed mode (iso_engine)
   tbvm disasm <file>           Disassemble bytecode to text
 ";
@@ -52,6 +53,20 @@ fn cmd_run(path: &str) -> Result<(), String> {
         .map_err(|e| format!("cannot create output.png: {}", e))?;
     vm.write_png_file(&f)
         .map_err(|e| format!("cannot write output.png: {}", e))?;
+
+    if exit_code != 0 {
+        eprintln!("Exit code: {}", exit_code);
+    }
+    Ok(())
+}
+
+fn cmd_gif(path: &str) -> Result<(), String> {
+    let code = read_bytecode(path)?;
+    let mut vm = Vm::new_with_capture(code);
+    let exit_code = vm.run().map_err(|e| format!("VM error: {}", e))?;
+
+    vm.write_gif("output.gif")
+        .map_err(|e| format!("cannot write output.gif: {}", e))?;
 
     if exit_code != 0 {
         eprintln!("Exit code: {}", exit_code);
@@ -216,6 +231,13 @@ fn main() {
                 Err("usage: tbvm isolate <file> <dir>".into())
             } else {
                 cmd_isolate(&args[2], &args[3])
+            }
+        }
+        "gif" => {
+            if args.len() < 3 {
+                Err("usage: tbvm gif <file>".into())
+            } else {
+                cmd_gif(&args[2])
             }
         }
         "disasm" => {

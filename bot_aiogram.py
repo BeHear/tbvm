@@ -24,6 +24,7 @@ HELP_TEXT = """\
 <b>Команды:</b>
 /asm &lt;код&gt; — собрать программу, получить .bin
 /run &lt;код&gt; — собрать и выполнить в песочнице
+/gif &lt;код&gt; — собрать и создать GIF-анимацию
 /help — список инструкций
 /example — пример программы
 📁 Загрузи .s / .asm / .txt файл — получу .bin
@@ -101,14 +102,21 @@ def _setrlimit():
         pass
 
 
-async def _run_sandboxed(data: bytes) -> dict:
+async def _run_sandboxed(data: bytes, gif_mode: bool = False) -> dict:
     with tempfile.TemporaryDirectory(prefix="tbvm_") as tmpdir:
         bin_path = os.path.join(tmpdir, "program.bin")
         with open(bin_path, "wb") as f:
             f.write(data)
 
+        cmd = [VM_CMD[0]]
+        if gif_mode:
+            cmd.append("gif")
+        else:
+            cmd.append("run")
+        cmd.append(bin_path)
+
         proc = await asyncio.create_subprocess_exec(
-            *VM_CMD, bin_path,
+            *cmd,
             cwd=tmpdir,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -129,14 +137,15 @@ async def _run_sandboxed(data: bytes) -> dict:
             stdout, stderr = b"", b""
             timed_out = True
 
-        png_data = None
-        png_path = os.path.join(tmpdir, "output.png")
-        if os.path.isfile(png_path) and not os.path.islink(png_path):
-            st = os.stat(png_path)
+        out_name = "output.gif" if gif_mode else "output.png"
+        out_data = None
+        out_path = os.path.join(tmpdir, out_name)
+        if os.path.isfile(out_path) and not os.path.islink(out_path):
+            st = os.stat(out_path)
             if stat.S_ISREG(st.st_mode) and 0 < st.st_size < 512 * 1024:
-                fd = os.open(png_path, os.O_RDONLY | os.O_NOFOLLOW)
+                fd = os.open(out_path, os.O_RDONLY | os.O_NOFOLLOW)
                 try:
-                    png_data = os.read(fd, st.st_size)
+                    out_data = os.read(fd, st.st_size)
                 finally:
                     os.close(fd)
 
@@ -144,7 +153,8 @@ async def _run_sandboxed(data: bytes) -> dict:
             "stdout": stdout,
             "stderr": stderr,
             "timeout": timed_out,
-            "png": png_data,
+            "output": out_data,
+            "gif_mode": gif_mode,
         }
 
 
@@ -173,6 +183,7 @@ async def cmd_start(message: Message) -> None:
         "<code>/help</code> — справка\n"
         "<code>/asm MOV r0 42 | PRINT r0 | HALT</code> — собрать\n"
         "<code>/run MOV r0 42 | PRINT r0 | HALT</code> — собрать и выполнить\n"
+        "<code>/gif MOV r0 0 | MOV r1 0 | MOV r2 255 | .loop DRAW r0 r1 r2 | ADDI r0 1 | ADDI r1 1 | CMPI r0 64 | JNZ .loop | HALT</code> — GIF-анимация\n"
         "<code>/example</code> — пример\n\n"
         f"{prefix}\n\n"
         "📁 <b>Загрузи</b> <code>.s</code> / <code>.asm</code> / <code>.txt</code> файл — получу <code>.bin</code>",
@@ -295,10 +306,82 @@ async def cmd_run(message: Message, command: CommandObject) -> None:
 
     await msg.edit_text(text)
 
-    if result["png"]:
+    if result["output"]:
+        ext = "gif" if result["gif_mode"] else "png"
+        caption = "🎬 VRAM (GIF)" if result["gif_mode"] else "🖼 VRAM (PNG)"
         await message.answer_document(
-            document=BufferedInputFile(result["png"], filename="output.png"),
-            caption="🖼 VRAM (PNG)",
+            document=BufferedInputFile(result["output"], filename=f"output.{ext}"),
+            caption=caption,
+        )
+
+
+@dp.message(Command("gif"))
+async def cmd_gif(message: Message, command: CommandObject) -> None:
+    if not VM_CMD:
+        await message.answer(
+            "❌ VM бинарник не найден.\n"
+            "Собери проект на сервере: <code>make</code> или <code>make tbvm</code>"
+        )
+        return
+
+    args = command.args
+    if not args:
+        await message.answer(
+            "Использование: <code>/gif MOV r0 0 | MOV r1 0 | MOV r2 255 | .loop DRAW r0 r1 r2 | ADDI r0 1 | ADDI r1 1 | CMPI r0 64 | JNZ .loop | HALT</code>\n\n"
+            "Собирает и выполняет программу, создавая GIF-анимацию из каждого шага рисования."
+        )
+        return
+
+    remaining = _check_rate_limit(message.from_user.id)
+    if remaining is not None:
+        await message.answer(f"⏳ Подожди {remaining}с перед следующим запуском")
+        return
+
+    code = _normalize_code(args)
+    try:
+        data = asm.assemble(code)
+    except AssembleError as e:
+        await message.answer(f"❌ {e}")
+        return
+
+    msg = await message.answer("⏳ Собираю и выполняю (с записью GIF)...")
+
+    result = None
+    try:
+        result = await _run_sandboxed(data, gif_mode=True)
+    except FileNotFoundError:
+        await msg.edit_text("❌ VM бинарник не найден.")
+        return
+    except Exception:
+        logging.exception("Error in /gif execution")
+        await msg.edit_text("❌ Ошибка выполнения")
+        return
+
+    lines = []
+    if result["timeout"]:
+        lines.append("⏰ Программа превысила лимит и была остановлена.")
+
+    stdout = result["stdout"].decode("utf-8", errors="replace").strip()
+    stderr = result["stderr"].decode("utf-8", errors="replace").strip()
+
+    if stdout:
+        lines.append(f"<b>Вывод:</b>\n<pre>{stdout}</pre>")
+    if stderr:
+        lines.append(f"<b>Stderr:</b>\n<pre>{stderr}</pre>")
+
+    if not lines:
+        lines.append("✅ Программа выполнена (нет вывода на PRINT)")
+
+    text = "\n\n".join(lines)
+    if len(text) > 4096:
+        text = text[:4093] + "..."
+
+    await msg.edit_text(text)
+
+    if result["output"]:
+        await message.answer_document(
+            document=BufferedInputFile(result["output"], filename="output.gif"),
+            caption="🎬 VRAM (GIF-анимация)",
         )
 
 

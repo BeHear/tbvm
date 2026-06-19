@@ -7,7 +7,7 @@ tbvm:
 	cp rust/target/release/tbvm tbvm
 
 clean:
-	rm -f tbvm tbvm.exe *.o output.png
+	rm -f tbvm tbvm.exe *.o output.png output.gif
 	$(CARGO) clean --manifest-path rust/Cargo.toml
 
 .PHONY: all clean

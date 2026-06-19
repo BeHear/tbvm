@@ -294,8 +294,8 @@ def sandbox_png_captured():
     async def t():
         data = asm.assemble("MOV r0 10\nMOV r1 10\nMOV r2 255\nDRAW r0 r1 r2\nHALT")
         r = await _run_sandboxed(data)
-        assert r["png"] is not None, "no PNG"
-        assert len(r["png"]) > 100, f"PNG too small: {len(r['png'])}"
+        assert r["output"] is not None, "no output"
+        assert len(r["output"]) > 100, f"output too small: {len(r['output'])}"
     asyncio.run(t())
 
 
@@ -375,7 +375,7 @@ def sandbox_cls_produces_png():
         data = asm.assemble("CLS\nHALT")
         r = await _run_sandboxed(data)
         assert not r["timeout"]
-        assert r["png"] is not None, "no PNG on CLS"
+        assert r["output"] is not None, "no output on CLS"
     asyncio.run(t())
 
 

@@ -12,6 +12,7 @@ const FAULT_VEC_INVALID_OP: usize = 0;
 const FAULT_VEC_PRIVILEGE: usize = 1;
 const _FAULT_VEC_MEMORY: usize = 2; // reserved for memory bounds fault
 const FAULT_VEC_TIMER: usize = 3;
+const MAX_GIF_FRAMES: usize = 500;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Op {
@@ -40,6 +41,9 @@ pub struct Vm {
     int_sp: usize,
     timer_interval: i32,
     timer_counter: i32,
+
+    capture: bool,
+    frames: Vec<[i32; VRAM_W * VRAM_H]>,
 }
 
 fn decode_op(val: i32) -> Option<Op> {
@@ -81,7 +85,16 @@ impl Vm {
             int_sp: 0,
             timer_interval: 0,
             timer_counter: 0,
+
+            capture: false,
+            frames: Vec::new(),
         }
+    }
+
+    pub fn new_with_capture(code: Vec<i32>) -> Self {
+        let mut vm = Self::new(code);
+        vm.capture = true;
+        vm
     }
 
     fn read(&mut self) -> Result<i32, VmError> {
@@ -151,6 +164,9 @@ impl Vm {
 
     pub fn run(&mut self) -> Result<i32, VmError> {
         loop {
+            if self.capture && self.frames.len() >= MAX_GIF_FRAMES {
+                return Ok(0);
+            }
             if self.ip >= self.code.len() {
                 return Ok(0);
             }
@@ -273,6 +289,9 @@ impl Vm {
                     if x >= 0 && (x as usize) < VRAM_W && y >= 0 && (y as usize) < VRAM_H {
                         self.vram[y as usize * VRAM_W + x as usize] = self.regs[rc];
                     }
+                    if self.capture && self.frames.len() < MAX_GIF_FRAMES {
+                        self.frames.push(self.vram);
+                    }
                 }
 
                 Op::Print => {
@@ -282,6 +301,9 @@ impl Vm {
 
                 Op::Cls => {
                     self.vram.fill(0);
+                    if self.capture && self.frames.len() < MAX_GIF_FRAMES {
+                        self.frames.push(self.vram);
+                    }
                 }
 
                 Op::Rand => {
@@ -376,6 +398,36 @@ impl Vm {
         use std::io::Write;
         let mut f = f.try_clone()?;
         f.write_all(&raw)
+    }
+
+    pub fn write_gif(&self, path: &str) -> std::io::Result<()> {
+        use image::codecs::gif::GifEncoder;
+        use image::ExtendedColorType;
+
+        let frames_to_use: Vec<[i32; VRAM_W * VRAM_H]> = if self.frames.is_empty() {
+            vec![self.vram]
+        } else {
+            self.frames.clone()
+        };
+
+        let mut file = std::fs::File::create(path)?;
+        let mut encoder = GifEncoder::new(&mut file);
+        encoder.set_repeat(image::codecs::gif::Repeat::Infinite)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+        let mut raw = vec![0u8; VRAM_W * VRAM_H * 4];
+        for frame_vram in &frames_to_use {
+            for (i, &p) in frame_vram.iter().enumerate() {
+                let idx = i * 4;
+                raw[idx] = ((p >> 16) & 0xFF) as u8;
+                raw[idx + 1] = ((p >> 8) & 0xFF) as u8;
+                raw[idx + 2] = (p & 0xFF) as u8;
+                raw[idx + 3] = 0xFF;
+            }
+            encoder.encode(&raw, VRAM_W as u32, VRAM_H as u32, ExtendedColorType::Rgba8)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        }
+        Ok(())
     }
 
     fn encode_png_inner(&self) -> std::io::Result<Vec<u8>> {

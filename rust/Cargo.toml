@@ -8,5 +8,5 @@ name = "tbvm"
 path = "src/main.rs"
 
 [dependencies]
-image = "0.25"
+image = { version = "0.25", features = ["gif"] }
 libc = "0.2"
