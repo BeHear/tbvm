@@ -183,7 +183,7 @@ async def cmd_start(message: Message) -> None:
         "<code>/help</code> — справка\n"
         "<code>/asm MOV r0 42 | PRINT r0 | HALT</code> — собрать\n"
         "<code>/run MOV r0 42 | PRINT r0 | HALT</code> — собрать и выполнить\n"
-        "<code>/gif MOV r0 0 | MOV r1 0 | MOV r2 255 | .loop DRAW r0 r1 r2 | ADDI r0 1 | ADDI r1 1 | CMPI r0 64 | JNZ .loop | HALT</code> — GIF-анимация\n"
+        "<code>/gif MOV r0 0 | MOV r1 0 | MOV r2 255 | .loop | DRAW r0 r1 r2 | ADDI r0 1 | ADDI r1 1 | CMPI r0 64 | JNZ .loop | HALT</code> — GIF-анимация\n"
         "<code>/example</code> — пример\n\n"
         f"{prefix}\n\n"
         "📁 <b>Загрузи</b> <code>.s</code> / <code>.asm</code> / <code>.txt</code> файл — получу <code>.bin</code>",
@@ -327,7 +327,7 @@ async def cmd_gif(message: Message, command: CommandObject) -> None:
     args = command.args
     if not args:
         await message.answer(
-            "Использование: <code>/gif MOV r0 0 | MOV r1 0 | MOV r2 255 | .loop DRAW r0 r1 r2 | ADDI r0 1 | ADDI r1 1 | CMPI r0 64 | JNZ .loop | HALT</code>\n\n"
+            "Использование: <code>/gif MOV r0 0 | MOV r1 0 | MOV r2 255 | .loop | DRAW r0 r1 r2 | ADDI r0 1 | ADDI r1 1 | CMPI r0 64 | JNZ .loop | HALT</code>\n\n"
             "Собирает и выполняет программу, создавая GIF-анимацию из каждого шага рисования."
         )
         return
