@@ -9,7 +9,7 @@ import traceback
 sys.path.insert(0, os.path.dirname(__file__))
 
 from assembler import Assembler, AssembleError
-from bot_aiogram import _normalize_code, _check_rate_limit, _run_sandboxed, VM_CMD, RATE_LIMIT_SEC, _last_run, asm
+from bot_aiogram import _normalize_code, _check_rate_limit, _run_sandboxed, VM_CMD, RATE_LIMIT_SEC, _last_run, _run_lock, asm
 
 PASS = 0
 FAIL = 0
@@ -95,34 +95,38 @@ def normalize_tab_indented_comments():
 
 # ── _check_rate_limit ──────────────────────────────────────────────
 
+async def _rate(user_id):
+    return await _check_rate_limit(user_id)
+
 @test
 def ratelimit_first_call_passes():
     _last_run.pop(99991, None)
-    assert _check_rate_limit(99991) is None
+    _run_lock = asyncio.Lock()  # fresh lock for test isolation
+    assert asyncio.run(_rate(99991)) is None
 
 
 @test
 def ratelimit_immediate_second_blocked():
     _last_run.pop(99992, None)
-    _check_rate_limit(99992)
-    assert _check_rate_limit(99992) is not None
+    asyncio.run(_rate(99992))
+    assert asyncio.run(_rate(99992)) is not None
 
 
 @test
 def ratelimit_different_users_independent():
     _last_run.pop(99993, None)
     _last_run.pop(99994, None)
-    assert _check_rate_limit(99993) is None
-    assert _check_rate_limit(99994) is None
-    assert _check_rate_limit(99993) is not None
+    assert asyncio.run(_rate(99993)) is None
+    assert asyncio.run(_rate(99994)) is None
+    assert asyncio.run(_rate(99993)) is not None
 
 
 @test
 def ratelimit_resets_after_cooldown():
     _last_run.pop(99995, None)
-    _check_rate_limit(99995)
+    asyncio.run(_rate(99995))
     _last_run[99995] = time.monotonic() - RATE_LIMIT_SEC - 1
-    assert _check_rate_limit(99995) is None, "should have reset"
+    assert asyncio.run(_rate(99995)) is None, "should have reset"
 
 
 # ── asm.assemble ───────────────────────────────────────────────────

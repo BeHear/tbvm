@@ -61,11 +61,19 @@ class Assembler:
             if not text:
                 continue
             if text.startswith('.'):
-                label = text[1:]
+                if len(text) < 2 or text[1].isspace():
+                    raise AssembleError(f"Invalid label at line {line_no}")
+                rest = text[1:].strip()
+                label_parts = rest.split(None, 1)
+                label = label_parts[0]
                 if label in labels:
                     raise AssembleError(f"Duplicate label '{label}' at line {line_no}")
+                if not label:
+                    raise AssembleError(f"Empty label at line {line_no}")
                 labels[label] = ip
-                continue
+                if len(label_parts) == 1:
+                    continue
+                text = label_parts[1]
             parts = text.split()
             op = parts[0].upper()
             if op not in OPCODES:
@@ -77,6 +85,9 @@ class Assembler:
                     f"'{op}' expects {len(expected)} arg(s), got {len(args)} at line {line_no}")
             parsed_lines.append((op, args, line_no))
             ip += 1 + len(expected)
+
+        if not parsed_lines:
+            return b''
 
         bytecode = []
         for op, args, line_no in parsed_lines:
@@ -93,9 +104,12 @@ class Assembler:
                     bytecode.append(n)
                 else:
                     try:
-                        bytecode.append(int(arg))
+                        val = int(arg)
                     except ValueError:
                         raise AssembleError(f"Invalid value '{arg}' at line {line_no}")
+                    if val < -2**31 or val > 2**31 - 1:
+                        raise AssembleError(f"Value {val} out of 32-bit range at line {line_no}")
+                    bytecode.append(val)
 
         return struct.pack('<' + 'i' * len(bytecode), *bytecode)
 

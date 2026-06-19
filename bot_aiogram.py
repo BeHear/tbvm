@@ -67,10 +67,12 @@ CMPI r0 0
 JNZ .loop
 HALT"""
 
+SUPPORTED_EXT = {".s", ".asm", ".txt"}
+MAX_FILE_SIZE = 64 * 1024
+
 def _normalize_code(raw: str) -> str:
     """Split inline `|` separators; preserve `;` and `#` as comments only."""
     return raw.replace("|", "\n")
-MAX_FILE_SIZE = 64 * 1024
 
 # ── Sandboxed VM execution ──────────────────────────────────────────
 
@@ -90,7 +92,10 @@ SANDBOX_MEMORY = 64 * 1024 * 1024
 SANDBOX_CPU = 3
 
 _last_run: dict[int, float] = {}
+_run_lock: asyncio.Lock = asyncio.Lock()
 RATE_LIMIT_SEC = 5
+
+_sandbox_semaphore = asyncio.Semaphore(2)
 
 
 def _setrlimit():
@@ -99,10 +104,17 @@ def _setrlimit():
         resource.setrlimit(resource.RLIMIT_AS, (SANDBOX_MEMORY, SANDBOX_MEMORY))
         resource.setrlimit(resource.RLIMIT_CPU, (SANDBOX_CPU, SANDBOX_CPU))
     except (ImportError, RuntimeError):
-        pass
+        logging.warning("setrlimit failed — sandbox runs without resource limits")
+    except ValueError as e:
+        logging.warning("setrlimit rejected: %s", e)
 
 
 async def _run_sandboxed(data: bytes, gif_mode: bool = False) -> dict:
+    async with _sandbox_semaphore:
+        return await _run_sandboxed_impl(data, gif_mode)
+
+
+async def _run_sandboxed_impl(data: bytes, gif_mode: bool = False) -> dict:
     with tempfile.TemporaryDirectory(prefix="tbvm_") as tmpdir:
         bin_path = os.path.join(tmpdir, "program.bin")
         with open(bin_path, "wb") as f:
@@ -158,14 +170,15 @@ async def _run_sandboxed(data: bytes, gif_mode: bool = False) -> dict:
         }
 
 
-def _check_rate_limit(user_id: int) -> int | None:
-    now = time.monotonic()
-    last = _last_run.get(user_id)
-    if last is not None:
-        remaining = RATE_LIMIT_SEC - (now - last)
-        if remaining > 0:
-            return int(remaining) + 1
-    _last_run[user_id] = now
+async def _check_rate_limit(user_id: int) -> int | None:
+    async with _run_lock:
+        now = time.monotonic()
+        last = _last_run.get(user_id)
+        if last is not None:
+            remaining = RATE_LIMIT_SEC - (now - last)
+            if remaining > 0:
+                return int(remaining) + 1
+        _last_run[user_id] = now
     return None
 
 
@@ -217,7 +230,7 @@ async def cmd_asm(message: Message, command: CommandObject) -> None:
         )
         return
 
-    remaining = _check_rate_limit(message.from_user.id)
+    remaining = await _check_rate_limit(message.from_user.id)
     if remaining is not None:
         await message.answer(f"⏳ Подожди {remaining}с перед следующей сборкой")
         return
@@ -257,7 +270,7 @@ async def cmd_run(message: Message, command: CommandObject) -> None:
         )
         return
 
-    remaining = _check_rate_limit(message.from_user.id)
+    remaining = await _check_rate_limit(message.from_user.id)
     if remaining is not None:
         await message.answer(f"⏳ Подожди {remaining}с перед следующим запуском")
         return
@@ -332,7 +345,7 @@ async def cmd_gif(message: Message, command: CommandObject) -> None:
         )
         return
 
-    remaining = _check_rate_limit(message.from_user.id)
+    remaining = await _check_rate_limit(message.from_user.id)
     if remaining is not None:
         await message.answer(f"⏳ Подожди {remaining}с перед следующим запуском")
         return
@@ -391,6 +404,11 @@ async def handle_file(message: Message, bot: Bot) -> None:
     if not doc or not doc.file_name:
         return
 
+    remaining = await _check_rate_limit(message.from_user.id)
+    if remaining is not None:
+        await message.answer(f"⏳ Подожди {remaining}с перед следующей сборкой")
+        return
+
     ext = os.path.splitext(doc.file_name)[1].lower()
     if ext not in SUPPORTED_EXT:
         await message.answer(f"❌ Поддерживаются только: {', '.join(SUPPORTED_EXT)}")
@@ -420,15 +438,24 @@ async def handle_file(message: Message, bot: Bot) -> None:
             document=BufferedInputFile(data, filename=f"{base}.bin"),
             caption=caption,
         )
-        await msg.delete()
+        try:
+            await msg.delete()
+        except Exception:
+            pass
         dis = asm.disassemble(data)
         if len(dis) < 3500:
             await message.answer(f"<pre>{dis}</pre>")
     except AssembleError as e:
-        await msg.edit_text(f"❌ {e}")
+        try:
+            await msg.edit_text(f"❌ {e}")
+        except Exception:
+            await message.answer(f"❌ {e}")
     except Exception:
         logging.exception("Internal error in file handler")
-        await msg.edit_text("❌ Internal error")
+        try:
+            await msg.edit_text("❌ Internal error")
+        except Exception:
+            await message.answer("❌ Internal error")
 
 
 async def main() -> None:

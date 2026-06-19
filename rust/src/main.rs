@@ -40,6 +40,7 @@ fn read_bytecode(path: &str) -> Result<Vec<i32>, String> {
 
 fn cmd_run(path: &str) -> Result<(), String> {
     let code = read_bytecode(path)?;
+    sandbox::try_chroot_here();
     let mut vm = Vm::new(code);
     let exit_code = vm.run().map_err(|e| format!("VM error: {}", e))?;
 
@@ -62,10 +63,19 @@ fn cmd_run(path: &str) -> Result<(), String> {
 
 fn cmd_gif(path: &str) -> Result<(), String> {
     let code = read_bytecode(path)?;
+    sandbox::try_chroot_here();
     let mut vm = Vm::new_with_capture(code);
     let exit_code = vm.run().map_err(|e| format!("VM error: {}", e))?;
 
-    vm.write_gif("output.gif")
+    let out_path = Path::new("output.gif");
+    let f = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(out_path)
+        .map_err(|e| format!("cannot create output.gif: {}", e))?;
+    vm.write_gif_file(&f)
         .map_err(|e| format!("cannot write output.gif: {}", e))?;
 
     if exit_code != 0 {
@@ -73,6 +83,8 @@ fn cmd_gif(path: &str) -> Result<(), String> {
     }
     Ok(())
 }
+
+const MAX_EXEC_STRING: usize = 1024;
 
 fn extract_exec_string(code: &[i32], offset: usize) -> Result<(String, usize), String> {
     let mut bytes = Vec::new();
@@ -86,6 +98,9 @@ fn extract_exec_string(code: &[i32], offset: usize) -> Result<(String, usize), S
                 return Ok((s.to_string(), words_consumed));
             }
             bytes.push(byte);
+            if bytes.len() > MAX_EXEC_STRING {
+                return Err("EXEC string too long".to_string());
+            }
         }
     }
     Err("unterminated EXEC string".to_string())
@@ -110,24 +125,26 @@ fn cmd_isolate(path: &str, dir: &str) -> Result<(), String> {
                 if ip + 2 > code.len() {
                     return Err("unexpected end of code".into());
                 }
-                let r = code[ip] as usize;
+                let r_raw = code[ip];
                 ip += 1;
                 let v = code[ip];
                 ip += 1;
-                if r >= 8 {
-                    return Err(format!("invalid register r{}", r));
+                if r_raw < 0 || r_raw as usize >= 8 {
+                    return Err(format!("invalid register r{}", r_raw));
                 }
+                let r = r_raw as usize;
                 regs[r] = v;
             }
             2 => {
                 if ip + 1 > code.len() {
                     return Err("unexpected end of code".into());
                 }
-                let r = code[ip] as usize;
+                let r_raw = code[ip];
                 ip += 1;
-                if r >= 8 {
-                    return Err(format!("invalid register r{}", r));
+                if r_raw < 0 || r_raw as usize >= 8 {
+                    return Err(format!("invalid register r{}", r_raw));
                 }
+                let r = r_raw as usize;
                 println!("REG[{}] = {}", r, regs[r]);
             }
             3 => {

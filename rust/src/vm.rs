@@ -94,6 +94,7 @@ impl Vm {
     pub fn new_with_capture(code: Vec<i32>) -> Self {
         let mut vm = Self::new(code);
         vm.capture = true;
+        vm.frames.reserve(MAX_GIF_FRAMES);
         vm
     }
 
@@ -137,7 +138,8 @@ impl Vm {
         if self.int_sp + 3 > INT_STACK_SIZE {
             return Err(VmError::IntStackOverflow);
         }
-        let ivt_addr = self.ivt_base + vector;
+        let ivt_addr = self.ivt_base.checked_add(vector)
+            .ok_or(VmError::InvalidInterrupt(vector))?;
         if ivt_addr >= MEM_SIZE {
             return Err(VmError::InvalidInterrupt(vector));
         }
@@ -174,7 +176,7 @@ impl Vm {
             let op = match decode_op(raw) {
                 Some(op) => op,
                 None => {
-                    if self.mode != 0 && self.ivt_base + FAULT_VEC_INVALID_OP < MEM_SIZE {
+                    if self.mode != 0 && self.ivt_base.checked_add(FAULT_VEC_INVALID_OP).map_or(false, |a| a < MEM_SIZE) {
                         let handler = self.memory[self.ivt_base + FAULT_VEC_INVALID_OP];
                         if handler != 0 {
                             self.fault(FAULT_VEC_INVALID_OP)?;
@@ -269,12 +271,20 @@ impl Vm {
                 }
 
                 Op::Store => {
+                    if self.mode != 0 {
+                        self.fault(FAULT_VEC_PRIVILEGE)?;
+                        continue;
+                    }
                     let a = self.addr_idx()?;
                     let r = self.reg_idx()?;
                     self.memory[a] = self.regs[r];
                 }
 
                 Op::Load => {
+                    if self.mode != 0 {
+                        self.fault(FAULT_VEC_PRIVILEGE)?;
+                        continue;
+                    }
                     let r = self.reg_idx()?;
                     let a = self.addr_idx()?;
                     self.regs[r] = self.memory[a];
@@ -287,10 +297,12 @@ impl Vm {
                     let x = self.regs[rx];
                     let y = self.regs[ry];
                     if x >= 0 && (x as usize) < VRAM_W && y >= 0 && (y as usize) < VRAM_H {
-                        self.vram[y as usize * VRAM_W + x as usize] = self.regs[rc];
-                    }
-                    if self.capture && self.frames.len() < MAX_GIF_FRAMES {
-                        self.frames.push(self.vram);
+                        let idx = y as usize * VRAM_W + x as usize;
+                        let old = self.vram[idx];
+                        self.vram[idx] = self.regs[rc];
+                        if self.capture && self.frames.len() < MAX_GIF_FRAMES && self.vram[idx] != old {
+                            self.frames.push(self.vram);
+                        }
                     }
                 }
 
@@ -343,10 +355,18 @@ impl Vm {
                 }
 
                 Op::Cli => {
+                    if self.mode != 0 {
+                        self.fault(FAULT_VEC_PRIVILEGE)?;
+                        continue;
+                    }
                     self.int_enabled = false;
                 }
 
                 Op::Sti => {
+                    if self.mode != 0 {
+                        self.fault(FAULT_VEC_PRIVILEGE)?;
+                        continue;
+                    }
                     self.int_enabled = true;
                 }
 
@@ -375,10 +395,12 @@ impl Vm {
             }
 
             if self.int_enabled && self.timer_interval > 0 {
-                self.timer_counter += 1;
+                self.timer_counter = self.timer_counter.wrapping_add(1);
                 if self.timer_counter >= self.timer_interval {
                     self.timer_counter = 0;
-                    let ivt_addr = self.ivt_base + FAULT_VEC_TIMER;
+                    let ivt_base = self.ivt_base;
+                    let ivt_addr = ivt_base.checked_add(FAULT_VEC_TIMER)
+                        .unwrap_or(usize::MAX);
                     if ivt_addr < MEM_SIZE && self.memory[ivt_addr] != 0 {
                         self.trigger_interrupt(FAULT_VEC_TIMER)?;
                     }
@@ -401,31 +423,38 @@ impl Vm {
     }
 
     pub fn write_gif(&self, path: &str) -> std::io::Result<()> {
+        let f = std::fs::File::create(path)?;
+        self.write_gif_file(&f)
+    }
+
+    pub fn write_gif_file(&self, f: &File) -> std::io::Result<()> {
         use image::codecs::gif::GifEncoder;
         use image::ExtendedColorType;
 
-        let frames_to_use: Vec<[i32; VRAM_W * VRAM_H]> = if self.frames.is_empty() {
-            vec![self.vram]
-        } else {
-            self.frames.clone()
-        };
-
-        let mut file = std::fs::File::create(path)?;
-        let mut encoder = GifEncoder::new(&mut file);
+        let mut f = f.try_clone()?;
+        let mut encoder = GifEncoder::new(&mut f);
         encoder.set_repeat(image::codecs::gif::Repeat::Infinite)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
         let mut raw = vec![0u8; VRAM_W * VRAM_H * 4];
-        for frame_vram in &frames_to_use {
-            for (i, &p) in frame_vram.iter().enumerate() {
+        let write_one = |raw: &mut [u8], encoder: &mut GifEncoder<&mut std::fs::File>, vram: &[i32; VRAM_W * VRAM_H]| -> std::io::Result<()> {
+            for (i, &p) in vram.iter().enumerate() {
                 let idx = i * 4;
                 raw[idx] = ((p >> 16) & 0xFF) as u8;
                 raw[idx + 1] = ((p >> 8) & 0xFF) as u8;
                 raw[idx + 2] = (p & 0xFF) as u8;
                 raw[idx + 3] = 0xFF;
             }
-            encoder.encode(&raw, VRAM_W as u32, VRAM_H as u32, ExtendedColorType::Rgba8)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            encoder.encode(raw, VRAM_W as u32, VRAM_H as u32, ExtendedColorType::Rgba8)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+        };
+
+        if self.frames.is_empty() {
+            write_one(&mut raw, &mut encoder, &self.vram)?;
+        } else {
+            for frame_vram in &self.frames {
+                write_one(&mut raw, &mut encoder, frame_vram)?;
+            }
         }
         Ok(())
     }
